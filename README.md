@@ -6,10 +6,10 @@
 [![JSDocs][jsdocs-src]][jsdocs-href]
 [![License][license-src]][license-href] -->
 
-_description_
+vite plugin to resolve indirect import to direct
 
 > **Note**:
-> Replace `vite-plugin-direct-import`, `_description_` globally to use this template.
+> Replace `vite-plugin-direct-import`, `vite plugin to resolve indirect import to direct` globally to use this template.
 
 ## Sponsors
 
