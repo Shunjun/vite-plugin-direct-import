@@ -8,9 +8,6 @@
 
 vite plugin to resolve indirect import to direct
 
-> **Note**:
-> Replace `vite-plugin-direct-import`, `vite plugin to resolve indirect import to direct` globally to use this template.
-
 ## Sponsors
 
 ## License
