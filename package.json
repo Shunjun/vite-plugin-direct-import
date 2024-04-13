@@ -1,7 +1,7 @@
 {
   "name": "vite-plugin-direct-import",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "packageManager": "pnpm@8.12.1",
   "description": "vite plugin to resolve indirect import to direct",
   "author": "Shunzi <tobyzsj@gmail.com>",
