@@ -17,8 +17,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.js"
     }
   },
   "main": "./dist/index.mjs",
@@ -37,7 +36,7 @@
   ],
   "scripts": {
     "build": "tsc --build",
-    "dev": "vite build --watch",
+    "dev": "tsc --build --watch",
     "lint": "eslint .",
     "release": "bumpp && npm publish",
     "start": "esno src/index.ts",
@@ -64,6 +63,7 @@
     "esno": "^4.0.0",
     "lint-staged": "^15.2.0",
     "rimraf": "^5.0.5",
+    "rollup": "^4.14.2",
     "simple-git-hooks": "^2.9.0",
     "type-fest": "^4.15.0",
     "typescript": "^5.3.3",

@@ -1,6 +1,11 @@
+/**
+ * @author        shunzi <tobyzsj@gmail.com>
+ * @date          2024-04-12 15:26:20
+ */
+
 import type { Plugin } from 'vite'
 import type { SetRequired } from 'type-fest'
-import { transForm } from './transform'
+import { Transformer } from './transform'
 import { initPath } from './path'
 import { type CheckFn, checkMatch } from './utils'
 
@@ -17,25 +22,31 @@ const defaultExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
 
 function directImportPlugin(options?: Options): Plugin {
   const _options = (options || {}) as InternalOptions
+
+  let transFormer: Transformer | null = null
+
   return {
     name: 'vite-plugin-import',
+    buildStart() {
+      transFormer = new Transformer(this)
+    },
     configResolved(resolvedConfig) {
       if (!_options.extensions) {
         _options.extensions
           = resolvedConfig.resolve.extensions || defaultExtensions
       }
-      // _options.root = resolvedConfig.root
       _options.exclude = _options.exclude || []
-
       initPath(_options)
     },
-    async transform(code, id) {
-      if (checkMatch(_options.exclude, id) || /node_modules/.test(id))
-        return
-      if (checkMatch(_options.include, id))
-        code = await transForm(code, id, _options)
-
-      return code
+    transform: {
+      async  handler(code, id) {
+        if (checkMatch(_options.exclude, id) || /node_modules/.test(id))
+          return
+        if (checkMatch(_options.include, id)) {
+          const newCode = await transFormer?.transForm(code, id, _options)
+          return newCode
+        }
+      },
     },
   }
 }

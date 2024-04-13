@@ -15,9 +15,9 @@ export function genExtensions(extensions: string[]) {
 }
 
 const path = {
-  resolvePath: (target: string, fromUrl: string) => {
-    return _resolvePath(target, {
-      url: fromUrl,
+  resolvePath: (source: string, importer: string) => {
+    return _resolvePath(source, {
+      url: importer,
     })
   },
   relative(form: string, to: string) {

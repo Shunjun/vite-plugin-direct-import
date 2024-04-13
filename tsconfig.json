@@ -7,9 +7,13 @@
     "resolveJsonModule": true,
     "strict": true,
     "strictNullChecks": true,
+    "declaration": true,
+    "declarationDir": "./dist",
+    "outDir": "./dist",
     "esModuleInterop": true,
     "skipDefaultLibCheck": true,
     "skipLibCheck": true
   },
-  "exclude": ["test/**/*.ts"]
+  "include": ["src/**/*"],
+  "exclude": ["test/fixtures/**/*.ts"]
 }

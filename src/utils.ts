@@ -1,7 +1,3 @@
-/**
- * @author        shunzi <tobyzsj@gmail.com>
- * @date          2024-04-12 18:16:15
- */
 import { minimatch } from 'minimatch'
 
 export type CheckFn = (id: string) => boolean
