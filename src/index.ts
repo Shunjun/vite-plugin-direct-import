@@ -3,11 +3,13 @@
  * @date          2024-04-12 15:26:20
  */
 
+import fs from 'node:fs/promises'
 import type { Plugin } from 'vite'
-import type { SetRequired } from 'type-fest'
+import type { InternalOptions } from './transform'
 import { Transformer } from './transform'
 import { initPath } from './path'
-import { type CheckFn, checkMatch } from './utils'
+import { type CheckFn, checkMatch } from './utils/utils'
+import { Timer } from './utils/timer'
 
 export interface Options {
   extensions?: string[]
@@ -16,37 +18,60 @@ export interface Options {
   exclude?: (string | RegExp) [] | CheckFn
 }
 
-export type InternalOptions = SetRequired<Options, 'extensions'>
-
-const defaultExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
+const supportedExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
 
 function directImportPlugin(options?: Options): Plugin {
   const _options = (options || {}) as InternalOptions
-
-  let transFormer: Transformer | null = null
-
   return {
-    name: 'vite-plugin-import',
-    buildStart() {
-      transFormer = new Transformer(this)
-    },
+    name: 'vite-plugin-direct-import',
     configResolved(resolvedConfig) {
-      if (!_options.extensions) {
-        _options.extensions
-          = resolvedConfig.resolve.extensions || defaultExtensions
-      }
+      const _extensions = _options.extensions || resolvedConfig.resolve.extensions || supportedExtensions
+      _options.extensions = _extensions.filter(ext => supportedExtensions.includes(ext))
       _options.exclude = _options.exclude || []
       initPath(_options)
     },
     transform: {
+      order: 'pre',
       async  handler(code, id) {
-        if (checkMatch(_options.exclude, id) || /node_modules/.test(id))
+        const ext = id.slice(id.lastIndexOf('.'))
+        if (checkMatch(_options.exclude, id)
+          || /node_modules/.test(id)
+          || id.startsWith('__')
+          || !supportedExtensions.includes(ext))
           return
         if (checkMatch(_options.include, id)) {
-          const newCode = await transFormer?.transForm(code, id, _options)
+          const transFormer = new Transformer(this, id)
+          const newCode = await transFormer?.transForm(code, _options)
           return newCode
         }
       },
+    },
+    buildEnd() {
+      // test
+      fs.writeFile('gencode.log', Transformer.content.join('\n'))
+      const contents: string[] = []
+      let ttTime = 0
+      Timer.timers.forEach((value, key) => {
+        contents.push(`[file]:${key}`)
+        contents.push(`transformTimes:${value.transformTimes}`)
+        contents.push(`time:${value.time}ms`)
+        ttTime += value.time
+
+        const otherTimes = value.otherTimes
+        Object.keys(otherTimes).forEach((type) => {
+          const step = otherTimes[type]
+          contents.push(`   [type]: ${type}`)
+          contents.push(`   totalTime: ${step.totalTime}ms`)
+
+          step.details.forEach((d) => {
+            contents.push(`       ${d.key.trim()}: ${d.time}ms`)
+          })
+        })
+      })
+
+      contents.unshift(`totalTime: ${ttTime}ms`)
+
+      fs.writeFile('./vite-plugin-direct-import.log', contents.join('\n'))
     },
   }
 }

@@ -4,9 +4,13 @@ import { findExports, findStaticImports, parseStaticImport } from 'mlly'
 
 import MagicString from 'magic-string'
 import type { PluginContext, ResolvedId } from 'rollup'
+import type { SetRequired } from 'type-fest'
 import pathUtil from './path'
-import { checkMatch } from './utils'
-import type { InternalOptions } from './index'
+import { checkMatch } from './utils/utils'
+import { Timer } from './utils/timer'
+import type { Options } from './index'
+
+export type InternalOptions = SetRequired<Options, 'extensions'>
 
 interface SourcePath {
   name: string
@@ -15,7 +19,6 @@ interface SourcePath {
 
 interface ResolvedImport extends SourcePath {
   alias: string
-
 }
 
 interface ModuleExportInfo {
@@ -25,39 +28,89 @@ interface ModuleExportInfo {
     [ref: string]: SourcePath
   }
 }
-export class Transformer {
-  moduleExportCache = new Map<string, ModuleExportInfo>()
 
-  constructor(private context: PluginContext) {
+export class Transformer {
+  private static moduleExportCache = new Map<string, ModuleExportInfo | Promise<ModuleExportInfo> >()
+  private static resolveCache = new Map<string, ResolvedId | null>()
+
+  timer: Timer
+
+  constructor(private context: PluginContext, private id: string) {
+    this.timer = new Timer(id)
   }
 
   async transForm(
     code: string,
-    id: string,
     options: InternalOptions,
   ) {
+    this.timer.startTimer()
     const newCode = new MagicString(code)
     const imports = findStaticImports(code)
-
     await Promise.all(
       imports.map(async (imp) => {
         if (checkMatch(options.specifier, imp.specifier)) {
           const parsedImp = parseStaticImport(imp)
+          // 只处理名称导入，default导入的以后再处理
           if (!Object.keys(parsedImp.namedImports || {}).length)
             return
-          const importCode = await this.transFormImport(parsedImp, id)
+          const importCode = await this.transFormImport(parsedImp, this.id)
           if (importCode)
             newCode.update(imp.start, imp.end, importCode)
         }
       }),
     )
-
+    this.timer.endTimer()
     return newCode.hasChanged() ? newCode.toString() : undefined
   }
 
+  async transFormImport(parsedImp: ParsedStaticImport, id: string) {
+    try {
+      this.timer.startStepTimer('tasnform import', parsedImp.code)
+      const menber = Object.entries(parsedImp.namedImports || {}).concat()
+      if (parsedImp.defaultImport)
+        menber.push(['default', parsedImp.defaultImport])
+
+      const sourcePath = await this.resolve(parsedImp.specifier, id)
+
+      if (!sourcePath || sourcePath.external || !sourcePath.id.startsWith('/'))
+        return null
+
+      let needGenerate = false
+      const res: ResolvedImport[] = await Promise.all(
+        menber.map(async ([name, alias]) => {
+          // 没有找到，从原始位置导入
+          const res = await this.findSourcePath(name, sourcePath.id) || {
+            name,
+            source: parsedImp.specifier,
+          }
+          if (res)
+            needGenerate = true
+          return {
+            alias,
+            ...res,
+          }
+        }),
+      )
+
+      if (!needGenerate)
+        return null
+      return this.generateImportCode(res)
+    }
+    catch (error) {
+      return null
+    }
+    finally {
+      this.timer.endStepTimer('tasnform import', parsedImp.code)
+    }
+  }
+
   async resolve(source: string, importer: string) {
-    let resolved = await this.context.resolve(source, importer)
-    if (!resolved) {
+    const key = `${source}#${importer}`
+    if (Transformer.resolveCache.has(key))
+      return Transformer.resolveCache.get(key)
+    try {
+      this.timer.startStepTimer('resolve', source)
+      let resolved = null
       const customRresolved = await pathUtil.resolvePath(source, importer)
       if (customRresolved) {
         resolved = {
@@ -65,43 +118,25 @@ export class Transformer {
           external: false,
         } as ResolvedId
       }
+      Transformer.resolveCache.set(key, resolved)
+      return resolved
     }
-    return resolved
-  }
-
-  async transFormImport(parsedImp: ParsedStaticImport, id: string) {
-    const menber = Object.entries(parsedImp.namedImports || {})
-    const sourcePath = await this.context.resolve(parsedImp.specifier, id)
-    if (!sourcePath || sourcePath.external)
+    catch (error) {
       return null
-
-    const res: ResolvedImport[] = await Promise.all(
-      menber.map(async ([source, alias]) => {
-        let res = await this.findSourcePath(source, sourcePath.id)
-        if (!res) {
-          // 没有找到，从原始位置导入
-          res = {
-            name: source,
-            source: sourcePath.id,
-          }
-        }
-        return {
-          alias,
-          ...res,
-        }
-      }),
-    )
-
-    return this.generateImportCode(res, id)
+    }
+    finally {
+      this.timer.endStepTimer('resolve', source)
+    }
   }
 
-  generateImportCode(resolvedImports: ResolvedImport[], id: string): string {
+  static content: string[] = []
+
+  generateImportCode(resolvedImports: ResolvedImport[]): string {
     const groupedImports: Record<string, ResolvedImport[]> = {}
 
     resolvedImports.forEach((resolved) => {
       if (!groupedImports[resolved.source])
         groupedImports[resolved.source] = []
-
       groupedImports[resolved.source].push(resolved)
     })
 
@@ -118,18 +153,18 @@ export class Transformer {
         }
         return imp.name === imp.alias ? imp.name : `${imp.name} as ${imp.alias}`
       })
-
       let importCode = `import ${importDefault}`
       if (nameCode.length) {
         if (importDefault)
-          importCode += ' , '
+          importCode += ', '
         importCode += `{ ${nameCode.join(', ')} }`
       }
-      const relativePath = pathUtil.relative(id, path)
-      importCode += ` from "${relativePath}"`
-
+      // const relativePath = pathUtil.relative(id, path)
+      importCode += ` from "${path}"`
       finalCode += `${importCode}\n`
     })
+
+    Transformer.content.push(`${finalCode}\n`)
 
     return finalCode
   }
@@ -142,97 +177,112 @@ export class Transformer {
     return exp.type === 'star'
   }
 
-  parseExport(code: string) {
-    const exps = findExports(code)
-
-    const moduleExportInfo: ModuleExportInfo = {
-      localExport: [],
-      reExport: {},
-      starExport: [],
-    }
-
-    exps.forEach((exp) => {
-      if (exp.specifier) {
-      // reexport
-        if (this.isNamedExport(exp)) {
-        // 2. export { a } from "./a";
-        // 3. export { a as aa } from "./a";
-        // 3. export { a as aa , b as bb } from "./a";
-          const exports = exp.exports.split(',').map((e) => {
-            const [name, alias] = e.split(' as ').map(s => s.trim())
-            return [name, alias || name]
-          })
-          exports.forEach(([name, alias]) => {
-            moduleExportInfo.reExport[alias] = {
-              name,
-              source: exp.specifier!,
-            }
-          })
+  async parseExport(source: string) {
+    if (Transformer.moduleExportCache.has(source))
+      return Transformer.moduleExportCache.get(source)
+    const promise = new Promise<ModuleExportInfo>((resolve, rejects) => {
+      this.timer.startStepTimer('parse export', source)
+      fs.readFile(source, 'utf-8').then((code) => {
+        const exps = findExports(code)
+        const moduleExportInfo: ModuleExportInfo = {
+          localExport: [],
+          reExport: {},
+          starExport: [],
         }
-        else if (this.isStarExport(exp)) {
-          if (exp.name) {
-          // export * as Children from "./Child";
-          // 对导出聚合进行了重命名，暂时无法处理
-            moduleExportInfo.localExport.push(exp.name)
+        exps.forEach((exp) => {
+          if (exp.specifier) {
+          // reexport
+            if (this.isNamedExport(exp)) {
+            // 2. export { a } from "./a";
+            // 3. export { a as aa } from "./a";
+            // 3. export { a as aa , b as bb } from "./a";
+              const exports = exp.exports.split(',').map((e) => {
+                const [name, alias] = e.split(' as ').map(s => s.trim())
+                return [name, alias || name]
+              })
+              exports.forEach(([name, alias]) => {
+                moduleExportInfo.reExport[alias] = {
+                  name,
+                  source: exp.specifier!,
+                }
+              })
+            }
+            else if (this.isStarExport(exp)) {
+              if (exp.name) {
+              // export * as Children from "./Child";
+              // 对导出聚合进行了重命名，暂时无法处理
+                moduleExportInfo.localExport.push(exp.name)
+              }
+              else {
+              // export * from "./Child";
+                moduleExportInfo.starExport.push(exp.specifier!)
+              }
+            }
           }
           else {
-          // export * from "./Child";
-            moduleExportInfo.starExport.push(exp.specifier!)
+            moduleExportInfo.localExport.push(...(exp.names || []))
           }
-        }
-      }
-      else {
-        moduleExportInfo.localExport.push(...(exp.names || []))
-      }
+        })
+
+        this.timer.endStepTimer('parse export', source)
+        resolve(moduleExportInfo)
+      }).catch(
+        (error) => {
+          rejects(error)
+        },
+      )
     })
 
-    return moduleExportInfo
+    Transformer.moduleExportCache.set(source, promise)
+    return promise
   }
 
   async findSourcePath(
     name: string,
     source: string,
   ): Promise<SourcePath | null> {
-    const code = await fs.readFile(source, 'utf-8')
+    if (!source.startsWith('/') || /node_modules/.test(source))
+      return null
+    try {
+      const moduleExportInfo = await this.parseExport(source)
+      if (!moduleExportInfo)
+        return null
 
-    let moduleExportInfo = this.moduleExportCache.get(source)
-    if (!moduleExportInfo) {
-      moduleExportInfo = this.parseExport(code)
-      this.moduleExportCache.set(source, moduleExportInfo)
-    }
-
-    if (moduleExportInfo.localExport.includes(name)) {
+      if (moduleExportInfo.localExport.includes(name)) {
       // 当前模块包含查找的本地导出
-      return {
-        name,
-        source,
-      }
-    }
-    else if (moduleExportInfo.reExport[name]) {
-      const reExport = moduleExportInfo.reExport[name]
-      const sourcePath = await this.resolve(reExport.source, source)
-      if (!sourcePath || sourcePath?.external || !sourcePath.id) {
         return {
           name,
           source,
         }
       }
-      return this.findSourcePath(reExport.name, sourcePath.id)
-    }
-    else {
-      for (const starPath of moduleExportInfo.starExport) {
-        const sourcePath = await this.resolve(starPath, source)
-        if (!sourcePath || sourcePath?.external || !sourcePath.id)
-          continue
-
-        const res = await this.findSourcePath(name, sourcePath.id)
-        if (res) {
-          moduleExportInfo.reExport[name] = res
-          return res
+      else if (moduleExportInfo.reExport[name]) {
+        const reExport = moduleExportInfo.reExport[name]
+        const sourcePath = await this.resolve(reExport.source, source)
+        if (!sourcePath || sourcePath?.external || !sourcePath.id) {
+          return {
+            name,
+            source,
+          }
         }
+        return this.findSourcePath(reExport.name, sourcePath.id)
+      }
+      else {
+        let resultPath = null
+        await Promise.all(moduleExportInfo.starExport.map (async (starPath) => {
+          const sourcePath = await this.resolve(starPath, source)
+          if (!sourcePath || sourcePath?.external || !sourcePath.id)
+            return
+          const res = await this.findSourcePath(name, sourcePath.id)
+          if (res) {
+            moduleExportInfo.reExport[name] = res
+            resultPath = res
+          }
+        }))
+        return resultPath
       }
     }
-
-    return null
+    catch (error) {
+      return null
+    }
   }
 }

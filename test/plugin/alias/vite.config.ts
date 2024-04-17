@@ -1,6 +1,7 @@
+/* eslint-disable antfu/no-import-dist */
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
-import directImport from '../../../src/index'
+import directImport from '../../../dist/index'
 
 export default defineConfig({
   plugins: [directImport()],

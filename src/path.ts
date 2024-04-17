@@ -5,7 +5,7 @@ import type {
 import {
   resolvePath as _resolvePath,
 } from 'mlly'
-import type { InternalOptions } from '.'
+import type { InternalOptions } from './transform'
 
 export function genExtensions(extensions: string[]) {
   return extensions.flatMap((ext) => {
