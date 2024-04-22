@@ -3,7 +3,7 @@ import type {
   ResolveOptions,
 } from 'mlly'
 import {
-  resolvePath as _resolvePath,
+  resolvePathSync as _resolvePath,
 } from 'mlly'
 import type { InternalOptions } from './transform'
 

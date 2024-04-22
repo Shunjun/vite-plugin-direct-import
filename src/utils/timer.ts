@@ -48,6 +48,8 @@ export class Timer {
   }
 
   startStepTimer(type: string, key: string) {
+    if (!key)
+      return
     const startTime = performance.now()
     const timeinfo = Timer.timers.get(this.id)!
     let step = timeinfo.otherTimes[type]
@@ -66,6 +68,9 @@ export class Timer {
   }
 
   endStepTimer(type: string, key: string) {
+    if (!key)
+      return
+
     const endtime = performance.now()
     const timeinfo = Timer.timers.get(this.id)!
     const step = timeinfo.otherTimes[type]
@@ -74,6 +79,8 @@ export class Timer {
       return
     detail.time = endtime - detail.startTime
     step.totalTime += detail.time
+    // if (detail.time > 10)
+    //   console.log(`${type}: ${detail.time}`)
   }
 
   removeStepTimer(type: string, key: string) {

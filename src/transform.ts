@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises'
+import fs from 'node:fs'
 import type { ESMExport, NamedExport, ParsedStaticImport } from 'mlly'
 import { findExports, findStaticImports, parseStaticImport } from 'mlly'
 
@@ -10,7 +10,10 @@ import { checkMatch } from './utils/utils'
 import { Timer } from './utils/timer'
 import type { Options } from './index'
 
-export type InternalOptions = SetRequired<Options, 'extensions'>
+export type InternalOptions = SetRequired<Options, 'extensions'> & {
+  root: string
+  externalLibs: string[]
+}
 
 interface SourcePath {
   name: string
@@ -35,20 +38,17 @@ export class Transformer {
 
   timer: Timer
 
-  constructor(private context: PluginContext, private id: string) {
+  constructor(private context: PluginContext, private id: string, private options: InternalOptions) {
     this.timer = new Timer(id)
   }
 
-  async transForm(
-    code: string,
-    options: InternalOptions,
-  ) {
+  async transForm(code: string) {
     this.timer.startTimer()
     const newCode = new MagicString(code)
     const imports = findStaticImports(code)
     await Promise.all(
       imports.map(async (imp) => {
-        if (checkMatch(options.specifier, imp.specifier)) {
+        if (checkMatch(this.options.specifier, imp.specifier)) {
           const parsedImp = parseStaticImport(imp)
           // 只处理名称导入，default导入的以后再处理
           if (!Object.keys(parsedImp.namedImports || {}).length)
@@ -79,15 +79,15 @@ export class Transformer {
       const res: ResolvedImport[] = await Promise.all(
         menber.map(async ([name, alias]) => {
           // 没有找到，从原始位置导入
-          const res = await this.findSourcePath(name, sourcePath.id) || {
-            name,
-            source: parsedImp.specifier,
-          }
+          const res = await this.findSourcePath(name, sourcePath.id)
           if (res)
             needGenerate = true
           return {
             alias,
-            ...res,
+            ...(res || {
+              name,
+              source: parsedImp.specifier,
+            }),
           }
         }),
       )
@@ -110,8 +110,12 @@ export class Transformer {
       return Transformer.resolveCache.get(key)
     try {
       this.timer.startStepTimer('resolve', source)
-      let resolved = null
-      const customRresolved = await pathUtil.resolvePath(source, importer)
+      let resolved = await this.context.resolve(source, importer)
+      let customRresolved = null
+      if (!resolved)
+        customRresolved = pathUtil.resolvePath(source, importer)
+
+      this.timer.endStepTimer('resolve', source)
       if (customRresolved) {
         resolved = {
           id: customRresolved,
@@ -125,7 +129,7 @@ export class Transformer {
       return null
     }
     finally {
-      this.timer.endStepTimer('resolve', source)
+      // const time = this.timer.logStepTimer('resolve', source)
     }
   }
 
@@ -181,8 +185,9 @@ export class Transformer {
     if (Transformer.moduleExportCache.has(source))
       return Transformer.moduleExportCache.get(source)
     const promise = new Promise<ModuleExportInfo>((resolve, rejects) => {
-      this.timer.startStepTimer('parse export', source)
-      fs.readFile(source, 'utf-8').then((code) => {
+      try {
+        this.timer.startStepTimer('parse export', source)
+        const code = fs.readFileSync(source, 'utf-8')
         const exps = findExports(code)
         const moduleExportInfo: ModuleExportInfo = {
           localExport: [],
@@ -191,11 +196,11 @@ export class Transformer {
         }
         exps.forEach((exp) => {
           if (exp.specifier) {
-          // reexport
+            // reexport
             if (this.isNamedExport(exp)) {
-            // 2. export { a } from "./a";
-            // 3. export { a as aa } from "./a";
-            // 3. export { a as aa , b as bb } from "./a";
+              // 2. export { a } from "./a";
+              // 3. export { a as aa } from "./a";
+              // 3. export { a as aa , b as bb } from "./a";
               const exports = exp.exports.split(',').map((e) => {
                 const [name, alias] = e.split(' as ').map(s => s.trim())
                 return [name, alias || name]
@@ -209,12 +214,12 @@ export class Transformer {
             }
             else if (this.isStarExport(exp)) {
               if (exp.name) {
-              // export * as Children from "./Child";
-              // 对导出聚合进行了重命名，暂时无法处理
+                // export * as Children from "./Child";
+                // 对导出聚合进行了重命名，暂时无法处理
                 moduleExportInfo.localExport.push(exp.name)
               }
               else {
-              // export * from "./Child";
+                // export * from "./Child";
                 moduleExportInfo.starExport.push(exp.specifier!)
               }
             }
@@ -223,14 +228,12 @@ export class Transformer {
             moduleExportInfo.localExport.push(...(exp.names || []))
           }
         })
-
         this.timer.endStepTimer('parse export', source)
         resolve(moduleExportInfo)
-      }).catch(
-        (error) => {
-          rejects(error)
-        },
-      )
+      }
+      catch (error) {
+        rejects(error)
+      }
     })
 
     Transformer.moduleExportCache.set(source, promise)
