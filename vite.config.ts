@@ -1,10 +1,9 @@
 import { defineConfig } from 'vite'
-import { externalizeDeps } from 'vite-plugin-externalize-deps'
 import dts from 'vite-plugin-dts'
 
 export default defineConfig({
   plugins: [
-    externalizeDeps(),
+    // externalizeDeps(),
     dts({ rollupTypes: true }),
   ],
   build: {
@@ -15,7 +14,7 @@ export default defineConfig({
       formats: ['es'],
     },
     rollupOptions: {
-      // external: ['vite', 'mlly', 'node:path', 'node:fs', 'node:fs/promises'],
+      external: ['vite', 'mlly', 'node:path', 'node:fs', 'node:fs/promises', 'node:process', 'node:url'],
     },
   },
 })

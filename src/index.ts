@@ -9,9 +9,10 @@ import process from 'node:process'
 import type { Plugin } from 'vite'
 import type { InternalOptions } from './transform'
 import { Transformer } from './transform'
-import { initPath } from './path'
-import { type CheckFn, checkMatch } from './utils/utils'
+import { inNodeModules } from './utils/path'
+import { type CheckFn, matches } from './utils/utils'
 import { Timer } from './utils/timer'
+import { getEntries } from './utils/alias'
 
 export interface Options {
   extensions?: string[]
@@ -24,13 +25,17 @@ const supportedExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
 
 function directImportPlugin(options?: Options): Plugin {
   const _options = (options || {}) as InternalOptions
+
   return {
     name: 'vite-plugin-direct-import',
     async  configResolved(resolvedConfig) {
+      const entries = getEntries(resolvedConfig.resolve.alias)
+
       const _extensions = _options.extensions || resolvedConfig.resolve.extensions || supportedExtensions
       _options.extensions = _extensions.filter(ext => supportedExtensions.includes(ext))
       _options.exclude = _options.exclude || []
       _options.root = resolvedConfig.root
+      _options.entries = entries
 
       const externalLibs = new Set<string>()
       const roots = [resolvedConfig.root, process.cwd()]
@@ -45,19 +50,17 @@ function directImportPlugin(options?: Options): Plugin {
         }
       }
       _options.externalLibs = Array.from(externalLibs.values())
-
-      initPath(_options)
     },
     transform: {
       order: 'pre',
       async handler(code, id) {
         const ext = id.slice(id.lastIndexOf('.'))
-        if (checkMatch(_options.exclude, id)
-          || /node_modules/.test(id)
+        if (matches(_options.exclude, id)
+          || inNodeModules(id)
           || id.startsWith('__')
           || !supportedExtensions.includes(ext))
           return
-        if (checkMatch(_options.include, id)) {
+        if (matches(_options.include, id)) {
           const transFormer = new Transformer(this, id, _options)
           const newCode = await transFormer?.transForm(code)
           return newCode
@@ -66,7 +69,6 @@ function directImportPlugin(options?: Options): Plugin {
     },
     buildEnd() {
       // test
-      fsPromise.writeFile('gencode.log', Transformer.content.join('\n'))
       const contents: string[] = []
       let ttTime = 0
       Timer.timers.forEach((value, key) => {

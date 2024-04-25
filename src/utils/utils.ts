@@ -2,15 +2,33 @@ import { minimatch } from 'minimatch'
 
 export type CheckFn = (id: string) => boolean
 
-export function checkMatch(rule: (string | RegExp) [] | CheckFn | undefined, id: string) {
-  if (typeof rule === 'function') {
-    return !!rule(id)
-  }
-  else if (Array.isArray(rule)) {
-    return rule.some((r) => {
-      return typeof r === 'string' ? minimatch(id, r) : r.test(id)
-    })
-  }
+export function toArray<T>(arg: T | T[]): T[] {
+  return Array.isArray(arg) ? arg : [arg]
+}
 
-  return true
+export function matches(pattern: (string | RegExp) [] | string | RegExp | CheckFn | undefined, id: string) {
+  if (!pattern)
+    return true
+
+  if (typeof pattern === 'function')
+    return !!pattern(id)
+
+  const patterns = toArray(pattern).filter(Boolean) as (string | RegExp)[]
+
+  return patterns.some((pattern) => {
+    if (pattern instanceof RegExp)
+      return pattern.test(id)
+
+    if (id.length < pattern.length)
+      return false
+
+    if (id === pattern)
+      return true
+
+    return id.startsWith(`${pattern}/`) || minimatch(id, pattern)
+  })
+}
+
+export function normalizeSlash(path: string): string {
+  return path.replace(/\\/g, '/')
 }

@@ -1,3 +1,3 @@
-import one, { three, two } from './bucket'
+import one, { two, three } from './bucket'
 
 console.log(one, two, three)

@@ -1,0 +1,2 @@
+import { foo } from "folder/folder2/foo.ts"
+console.log(foo)
